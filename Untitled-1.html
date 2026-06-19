@@ -1,0 +1,633 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cue — hands-free slide control</title>
+<style>
+  :root{
+    --ink:#12161B;
+    --panel:#1B222B;
+    --panel-2:#222B36;
+    --line:#2C3744;
+    --chalk:#ECEAE2;
+    --chalk-dim:#9AA4AF;
+    --amber:#E8A33D;
+    --amber-dim:#6B5430;
+    --teal:#4FB7A8;
+    --teal-dim:#2C4D48;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;}
+  body{
+    background:var(--ink);
+    color:var(--chalk);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    height:100vh;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+  }
+  .mono{font-family:"SF Mono",Consolas,"Liberation Mono",Menlo,monospace;letter-spacing:.02em;}
+
+  /* ---- top bar ---- */
+  header{
+    display:flex;
+    align-items:center;
+    gap:14px;
+    padding:12px 18px;
+    border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,var(--panel),var(--ink));
+    flex:0 0 auto;
+  }
+  .cue-light{
+    width:14px;height:14px;border-radius:50%;
+    background:#3a4250;
+    box-shadow:0 0 0 0 rgba(232,163,61,0);
+    transition:background .25s, box-shadow .25s;
+    flex:0 0 auto;
+  }
+  .cue-light.tracking{ background:var(--teal); box-shadow:0 0 10px 2px rgba(79,183,168,.55); }
+  .cue-light.fire{ background:var(--amber); box-shadow:0 0 18px 6px rgba(232,163,61,.85); }
+
+  #statusText{ font-size:13px; color:var(--chalk-dim); flex:0 0 auto; min-width:170px; }
+  header h1{
+    font-size:14px; font-weight:700; letter-spacing:.14em; text-transform:uppercase;
+    margin:0; color:var(--chalk-dim); flex:1 1 auto; text-align:center;
+  }
+  #slideCounter{
+    font-size:13px; color:var(--chalk-dim); flex:0 0 auto; min-width:90px; text-align:right;
+  }
+
+  /* ---- main layout ---- */
+  main{
+    flex:1 1 auto;
+    display:grid;
+    grid-template-columns:200px 1fr;
+    min-height:0;
+  }
+  .side{
+    border-right:1px solid var(--line);
+    padding:14px;
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+    background:var(--panel);
+    overflow:auto;
+  }
+  .camWrap{
+    position:relative;
+    border-radius:10px;
+    overflow:hidden;
+    background:#000;
+    aspect-ratio:4/3;
+    border:1px solid var(--line);
+  }
+  #cam{ width:100%; height:100%; object-fit:cover; transform:scaleX(-1); display:block; }
+  #camOverlay{
+    position:absolute; inset:0; width:100%; height:100%;
+    pointer-events:none; border-radius:10px;
+  }
+  #phaseLabel{
+    font-size:11px; color:var(--teal); text-align:center; min-height:16px;
+    letter-spacing:.03em; transition:color .3s;
+  }
+  #phaseLabel.recording{ color:#ff6b6b; }
+  .camOverlayMsg{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    text-align:center; font-size:12px; color:var(--chalk-dim); padding:10px;
+    background:rgba(18,22,27,.55);
+  }
+  button{
+    font-family:inherit; cursor:pointer; border-radius:9px; border:1px solid var(--line);
+    background:var(--panel-2); color:var(--chalk); padding:9px 10px; font-size:13px;
+    transition:background .15s, border-color .15s;
+  }
+  button:hover{ border-color:#3c4a59; }
+  button:focus-visible{ outline:2px solid var(--teal); outline-offset:2px; }
+  button.primary{ background:var(--amber); color:#221a0c; border-color:var(--amber); font-weight:600; }
+  button.primary:hover{ background:#f0ad4d; }
+  button:disabled{ opacity:.45; cursor:not-allowed; }
+
+  .hint{ font-size:11.5px; color:var(--chalk-dim); line-height:1.5; }
+  .hint b{ color:var(--chalk); }
+
+  fieldset{ border:1px solid var(--line); border-radius:9px; padding:8px 10px 10px; }
+  legend{ font-size:10.5px; color:var(--chalk-dim); text-transform:uppercase; letter-spacing:.1em; padding:0 4px; }
+  input[type=range]{ width:100%; }
+
+  /* ---- stage ---- */
+  .stage{
+    position:relative;
+    display:flex; align-items:center; justify-content:center;
+    background:
+      radial-gradient(ellipse at center, rgba(255,255,255,.03), transparent 60%),
+      var(--ink);
+    min-height:0; min-width:0;
+  }
+  #stageCanvasWrap{
+    position:relative;
+    box-shadow:0 0 0 1px var(--line), 0 30px 60px -20px rgba(0,0,0,.6);
+    border-radius:6px;
+    background:#0a0d10;
+    max-width:96%; max-height:92%;
+  }
+  #slideCanvas{ display:block; max-width:100%; max-height:100%; border-radius:6px; }
+  .emptyState{
+    text-align:center; max-width:380px; padding:30px;
+  }
+  .emptyState h2{ margin:0 0 8px; font-size:18px; color:var(--chalk); }
+  .emptyState p{ margin:0 0 18px; font-size:13.5px; color:var(--chalk-dim); line-height:1.6; }
+
+  .arrowFlag{
+    position:absolute; top:0; bottom:0; width:90px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:30px; color:var(--amber); opacity:0; pointer-events:none;
+    transition:opacity .15s;
+  }
+  .arrowFlag.left{ left:-10px; justify-content:flex-start; }
+  .arrowFlag.right{ right:-10px; justify-content:flex-end; }
+  .arrowFlag.show{ opacity:1; animation:flagPulse .55s ease-out; }
+  @keyframes flagPulse{ from{ transform:scale(1.3); opacity:1;} to{ transform:scale(1); opacity:.0;} }
+
+  .sweep{
+    position:absolute; inset:0; border-radius:6px; pointer-events:none;
+    box-shadow:inset 0 0 0 0 rgba(232,163,61,0);
+  }
+  .sweep.go{ animation:sweepGo .5s ease-out; }
+  @keyframes sweepGo{
+    0%{ box-shadow:inset 0 0 0 0 rgba(232,163,61,.9); }
+    100%{ box-shadow:inset 0 0 0 60px rgba(232,163,61,0); }
+  }
+
+  /* ---- bottom bar ---- */
+  footer{
+    flex:0 0 auto;
+    display:flex; align-items:center; justify-content:center; gap:14px;
+    padding:12px 18px; border-top:1px solid var(--line); background:var(--panel);
+  }
+  #dots{ display:flex; gap:5px; max-width:260px; overflow:hidden; }
+  #dots span{ width:6px; height:6px; border-radius:50%; background:var(--line); flex:0 0 auto; }
+  #dots span.on{ background:var(--amber); }
+
+  #liveAnnounce{ position:absolute; left:-9999px; }
+  ::selection{ background:var(--amber-dim); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="cue-light" id="cueLight" title="Tracking status"></div>
+  <div id="statusText">Camera off</div>
+  <h1>Cue</h1>
+  <div id="slideCounter" class="mono">— / —</div>
+</header>
+
+<main>
+  <div class="side">
+    <div class="camWrap">
+      <video id="cam" autoplay playsinline muted></video>
+      <canvas id="camOverlay" width="320" height="240"></canvas>
+      <div class="camOverlayMsg" id="camMsg">Camera is off</div>
+    </div>
+
+    <button class="primary" id="camBtn">Enable camera</button>
+    <div id="phaseLabel"></div>
+    <button id="calBtn" disabled title="Teach the system your exact swipe gesture">Calibrate my gesture</button>
+
+    <fieldset>
+      <legend>Swipe sensitivity</legend>
+      <input type="range" id="sensitivity" min="1" max="5" value="3" />
+    </fieldset>
+
+    <div class="hint">
+      After enabling camera, wait ~2 s for background learning, then swipe your open hand <b>left→right</b> for Next, <b>right→left</b> for Previous. Hit <b>Calibrate</b> to teach it your exact swipe.
+    </div>
+
+    <div class="hint">
+      No webcam? The buttons below and <b>← →</b> arrow keys always work.
+    </div>
+  </div>
+
+  <div class="stage">
+    <div id="emptyState" class="emptyState">
+      <h2>Load your slides to begin</h2>
+      <p>In PowerPoint: <b>File → Export → Create PDF/XPS</b>, then upload that PDF here. Each page becomes one slide.</p>
+      <input type="file" id="fileInput" accept="application/pdf" style="display:none" />
+      <button class="primary" id="uploadBtn">Upload PDF</button>
+    </div>
+
+    <div id="stageCanvasWrap" style="display:none">
+      <canvas id="slideCanvas"></canvas>
+      <div class="sweep" id="sweep"></div>
+      <div class="arrowFlag left" id="flagLeft">◀</div>
+      <div class="arrowFlag right" id="flagRight">▶</div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <button id="uploadBtn2" style="display:none">Load different PDF</button>
+  <button id="prevBtn" disabled>◀ Previous</button>
+  <div id="dots"></div>
+  <button id="nextBtn" disabled>Next ▶</button>
+</footer>
+
+<div id="liveAnnounce" aria-live="polite"></div>
+<input type="file" id="fileInput2" accept="application/pdf" style="display:none" />
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.worker.min.js";
+
+// ---------- state ----------
+let pdfDoc = null;
+let pageCount = 0;
+let currentPage = 1;
+let renderingPage = false;
+
+const slideCanvas = document.getElementById('slideCanvas');
+const slideCtx = slideCanvas.getContext('2d');
+const stageWrap = document.getElementById('stageCanvasWrap');
+const emptyState = document.getElementById('emptyState');
+const dotsEl = document.getElementById('dots');
+const counterEl = document.getElementById('slideCounter');
+const liveAnnounce = document.getElementById('liveAnnounce');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const flagLeft = document.getElementById('flagLeft');
+const flagRight = document.getElementById('flagRight');
+const sweepEl = document.getElementById('sweep');
+
+function flash(dir){
+  sweepEl.classList.remove('go'); void sweepEl.offsetWidth; sweepEl.classList.add('go');
+  const flag = dir === 'next' ? flagRight : flagLeft;
+  flag.classList.remove('show'); void flag.offsetWidth; flag.classList.add('show');
+}
+
+function updateChrome(){
+  counterEl.textContent = pageCount ? `${currentPage} / ${pageCount}` : '— / —';
+  prevBtn.disabled = !pageCount || currentPage <= 1;
+  nextBtn.disabled = !pageCount || currentPage >= pageCount;
+  liveAnnounce.textContent = pageCount ? `Slide ${currentPage} of ${pageCount}` : '';
+  if(pageCount){
+    dotsEl.innerHTML = '';
+    const maxDots = 40;
+    const n = Math.min(pageCount, maxDots);
+    for(let i=1;i<=n;i++){
+      const idx = Math.round((i-1) * (pageCount-1) / Math.max(n-1,1)) + 1;
+      const d = document.createElement('span');
+      if(idx === currentPage) d.classList.add('on');
+      dotsEl.appendChild(d);
+    }
+  }
+}
+
+async function renderPage(num){
+  if(!pdfDoc || renderingPage) return;
+  renderingPage = true;
+  try{
+    const page = await pdfDoc.getPage(num);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const wrap = stageWrap.parentElement;
+    const maxW = wrap.clientWidth * 0.94;
+    const maxH = wrap.clientHeight * 0.9;
+    const scale = Math.min(maxW / baseViewport.width, maxH / baseViewport.height);
+    const viewport = page.getViewport({ scale: Math.max(scale, 0.1) });
+    slideCanvas.width = viewport.width;
+    slideCanvas.height = viewport.height;
+    await page.render({ canvasContext: slideCtx, viewport }).promise;
+  } finally {
+    renderingPage = false;
+  }
+}
+
+function goTo(num){
+  if(!pageCount) return;
+  num = Math.min(Math.max(1, num), pageCount);
+  if(num === currentPage) return;
+  const dir = num > currentPage ? 'next' : 'prev';
+  currentPage = num;
+  renderPage(currentPage);
+  updateChrome();
+  return dir;
+}
+function nextSlide(){ const d = goTo(currentPage+1); if(d) flash('next'); }
+function prevSlide(){ const d = goTo(currentPage-1); if(d) flash('prev'); }
+
+prevBtn.addEventListener('click', prevSlide);
+nextBtn.addEventListener('click', nextSlide);
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'ArrowRight' || e.key === 'PageDown') nextSlide();
+  if(e.key === 'ArrowLeft' || e.key === 'PageUp') prevSlide();
+});
+
+async function loadPdf(file){
+  const buf = await file.arrayBuffer();
+  const loadingTask = pdfjsLib.getDocument({ data: buf });
+  pdfDoc = await loadingTask.promise;
+  pageCount = pdfDoc.numPages;
+  currentPage = 1;
+  emptyState.style.display = 'none';
+  stageWrap.style.display = '';
+  document.getElementById('uploadBtn2').style.display = '';
+  await renderPage(1);
+  updateChrome();
+}
+
+document.getElementById('uploadBtn').addEventListener('click', ()=> document.getElementById('fileInput').click());
+document.getElementById('uploadBtn2').addEventListener('click', ()=> document.getElementById('fileInput2').click());
+document.getElementById('fileInput').addEventListener('change', (e)=>{ if(e.target.files[0]) loadPdf(e.target.files[0]); });
+document.getElementById('fileInput2').addEventListener('change', (e)=>{ if(e.target.files[0]) loadPdf(e.target.files[0]); });
+
+window.addEventListener('resize', ()=> renderPage(currentPage));
+
+// ---------- camera + gesture detection ----------
+const camVideo   = document.getElementById('cam');
+const camMsg     = document.getElementById('camMsg');
+const camBtn     = document.getElementById('camBtn');
+const calBtn     = document.getElementById('calBtn');
+const phaseLabel = document.getElementById('phaseLabel');
+const cueLight   = document.getElementById('cueLight');
+const statusText = document.getElementById('statusText');
+const sensSlider = document.getElementById('sensitivity');
+const overlayCanvas = document.getElementById('camOverlay');
+const overlayCtx = overlayCanvas.getContext('2d');
+
+// ---- processing canvas (small = fast) ----
+const PW = 96, PH = 72;
+const procCanvas = document.createElement('canvas');
+procCanvas.width = PW; procCanvas.height = PH;
+const procCtx = procCanvas.getContext('2d', { willReadFrequently: true });
+
+// ---- background model (RGB running average) ----
+const bgModel = new Float32Array(PW * PH * 3);
+let bgFrameCount = 0;
+const BG_FRAMES_NEEDED = 20; // ~1.6 s at 80 ms/frame
+const BG_ALPHA_FAST  = 0.12; // learning rate while building model
+const BG_ALPHA_SLOW  = 0.008; // drift correction once ready
+
+// ---- state ----
+// IDLE | LEARNING | READY | CALIBRATING
+let camPhase = 'IDLE';
+let cameraOn = false;
+let detectTimer = null;
+let cooldownUntil = 0;
+
+// ---- trajectory ----
+const TRAIL_MS = 900;         // how long a swipe window lasts
+let trail    = [];             // live trail [{x,y,t}] normalised 0-1
+let trailCal = [];             // recorded during calibration
+let calMinDelta = 0.28;        // fraction of frame width required for swipe
+
+// ---- phase UI ----
+function updatePhaseUI(){
+  const msgs = {
+    IDLE:        '',
+    LEARNING:    '📡 Learning your background…',
+    READY:       '✋ Ready — swipe to advance slides',
+    CALIBRATING: '⏺ Recording — swipe now…'
+  };
+  phaseLabel.textContent = msgs[camPhase] || '';
+  phaseLabel.classList.toggle('recording', camPhase === 'CALIBRATING');
+  calBtn.disabled = (camPhase === 'IDLE' || camPhase === 'LEARNING' || camPhase === 'CALIBRATING');
+  calBtn.textContent = 'Calibrate my gesture';
+}
+
+// ---- overlay drawing ----
+function drawOverlay(fgX, fgY, hasMotion){
+  const W = overlayCanvas.width, H = overlayCanvas.height;
+  overlayCtx.clearRect(0, 0, W, H);
+
+  // learning phase: teal progress bar along bottom
+  if(camPhase === 'LEARNING'){
+    const pct = Math.min(bgFrameCount / BG_FRAMES_NEEDED, 1);
+    overlayCtx.fillStyle = 'rgba(79,183,168,0.22)';
+    overlayCtx.fillRect(0, H * 0.88, W, H * 0.12);
+    overlayCtx.fillStyle = 'rgba(79,183,168,0.75)';
+    overlayCtx.fillRect(0, H * 0.88, W * pct, H * 0.12);
+    return;
+  }
+
+  // draw swipe trail
+  if(trail.length > 1){
+    overlayCtx.beginPath();
+    overlayCtx.strokeStyle = 'rgba(232,163,61,0.75)';
+    overlayCtx.lineWidth   = 3;
+    overlayCtx.lineCap     = 'round';
+    overlayCtx.lineJoin    = 'round';
+    trail.forEach((p, i) => {
+      const px = p.x * W, py = p.y * H;
+      i === 0 ? overlayCtx.moveTo(px, py) : overlayCtx.lineTo(px, py);
+    });
+    overlayCtx.stroke();
+  }
+
+  // draw tracked-position dot
+  if(hasMotion && fgX !== null){
+    const isRecording = camPhase === 'CALIBRATING';
+    overlayCtx.beginPath();
+    overlayCtx.arc(fgX * W, fgY * H, 8, 0, Math.PI * 2);
+    overlayCtx.fillStyle   = isRecording ? 'rgba(255,90,90,0.9)' : 'rgba(79,183,168,0.9)';
+    overlayCtx.shadowColor = isRecording ? '#ff5a5a' : 'rgba(79,183,168,0.6)';
+    overlayCtx.shadowBlur  = 10;
+    overlayCtx.fill();
+    overlayCtx.shadowBlur  = 0;
+  }
+}
+
+// ---- core detection loop (runs every 80 ms) ----
+function detectFrame(){
+  if(!cameraOn) return;
+
+  // capture mirrored frame into proc canvas
+  procCtx.save();
+  procCtx.translate(PW, 0); procCtx.scale(-1, 1);
+  procCtx.drawImage(camVideo, 0, 0, PW, PH);
+  procCtx.restore();
+
+  let data;
+  try{ data = procCtx.getImageData(0, 0, PW, PH).data; }
+  catch(e){ return; }
+
+  const now = performance.now();
+
+  // === PHASE: LEARNING — build background model ===
+  if(camPhase === 'LEARNING'){
+    for(let i = 0, p = 0; i < data.length; i += 4, p++){
+      if(bgFrameCount === 0){
+        bgModel[p*3]   = data[i];
+        bgModel[p*3+1] = data[i+1];
+        bgModel[p*3+2] = data[i+2];
+      } else {
+        bgModel[p*3]   += BG_ALPHA_FAST * (data[i]   - bgModel[p*3]);
+        bgModel[p*3+1] += BG_ALPHA_FAST * (data[i+1] - bgModel[p*3+1]);
+        bgModel[p*3+2] += BG_ALPHA_FAST * (data[i+2] - bgModel[p*3+2]);
+      }
+    }
+    bgFrameCount++;
+    drawOverlay(null, null, false);
+    if(bgFrameCount >= BG_FRAMES_NEEDED){
+      camPhase = 'READY';
+      statusText.textContent = 'Ready — swipe your hand across the camera';
+      updatePhaseUI();
+    }
+    return;
+  }
+
+  // === PHASES: READY / CALIBRATING — background subtraction ===
+  const sensitivity = Number(sensSlider.value); // 1..5
+  const diffThresh  = 20 - sensitivity * 2;     // lower threshold = more sensitive
+
+  let sumX = 0, sumY = 0, count = 0;
+  for(let i = 0, p = 0; i < data.length; i += 4, p++){
+    const dr = Math.abs(data[i]   - bgModel[p*3]);
+    const dg = Math.abs(data[i+1] - bgModel[p*3+1]);
+    const db = Math.abs(data[i+2] - bgModel[p*3+2]);
+    if((dr + dg + db) / 3 > diffThresh){
+      sumX += (p % PW);
+      sumY += Math.floor(p / PW);
+      count++;
+    }
+  }
+
+  const minCount  = Math.max(18, PW * PH * 0.018);
+  const hasMotion = count >= minCount;
+  const fgX = hasMotion ? (sumX / count) / PW : null;
+  const fgY = hasMotion ? (sumY / count) / PH : null;
+
+  // slowly drift background toward current frame when nothing is moving
+  // (compensates for gradual lighting changes)
+  if(!hasMotion){
+    for(let i = 0, p = 0; i < data.length; i += 4, p++){
+      bgModel[p*3]   += BG_ALPHA_SLOW * (data[i]   - bgModel[p*3]);
+      bgModel[p*3+1] += BG_ALPHA_SLOW * (data[i+1] - bgModel[p*3+1]);
+      bgModel[p*3+2] += BG_ALPHA_SLOW * (data[i+2] - bgModel[p*3+2]);
+    }
+  }
+
+  cueLight.classList.toggle('tracking', hasMotion && now > cooldownUntil);
+
+  // update trail
+  if(hasMotion) trail.push({ x: fgX, y: fgY, t: now });
+  trail = trail.filter(p => now - p.t <= TRAIL_MS);
+
+  drawOverlay(fgX, fgY, hasMotion);
+
+  if(now <= cooldownUntil){ trail = []; return; }
+
+  if(!hasMotion){
+    statusText.textContent = 'Show your hand to the camera';
+  } else {
+    statusText.textContent = camPhase === 'CALIBRATING'
+      ? 'Recording gesture…'
+      : 'Hand detected — keep swiping';
+  }
+
+  // === record gesture during calibration ===
+  if(camPhase === 'CALIBRATING'){
+    if(hasMotion) trailCal.push({ x: fgX, t: now });
+    return;
+  }
+
+  // === detect swipe (READY phase) ===
+  if(trail.length < 4) return;
+  const first   = trail[0];
+  const last    = trail[trail.length - 1];
+  const deltaX  = last.x - first.x;          // negative = right→left (prev)
+  const deltaT  = last.t - first.t;
+  const speed   = Math.abs(deltaX) / deltaT; // normalised units per ms
+  const notVert = Math.abs(last.y - first.y) < 0.30; // reject vertical waves
+
+  if(Math.abs(deltaX) >= calMinDelta && speed > 0.00025 && notVert){
+    fireCue(deltaX > 0 ? 'next' : 'prev');
+  }
+}
+
+function fireCue(dir){
+  cooldownUntil = performance.now() + 1000;
+  trail = [];
+  cueLight.classList.remove('tracking');
+  cueLight.classList.add('fire');
+  setTimeout(()=> cueLight.classList.remove('fire'), 350);
+  statusText.textContent = dir === 'next' ? '▶ Next slide!' : '◀ Previous slide!';
+  if(dir === 'next') nextSlide(); else prevSlide();
+}
+
+// ---- calibration ----
+calBtn.addEventListener('click', ()=>{
+  if(camPhase === 'CALIBRATING'){
+    // finish recording and compute the threshold from the demo swipe
+    if(trailCal.length >= 3){
+      const dx = Math.abs(trailCal[trailCal.length - 1].x - trailCal[0].x);
+      calMinDelta = Math.max(0.10, dx * 0.60); // 60 % of demo = trigger width
+      const pct = Math.round(calMinDelta * 100);
+      statusText.textContent = `Gesture saved! Swipe ${pct}% of frame width to trigger.`;
+    } else {
+      statusText.textContent = 'Gesture too short — keeping default sensitivity.';
+    }
+    trailCal = [];
+    camPhase  = 'READY';
+    updatePhaseUI();
+    setTimeout(()=>{ statusText.textContent = 'Ready — swipe to advance slides'; }, 3000);
+    return;
+  }
+  // start recording
+  camPhase  = 'CALIBRATING';
+  trailCal  = [];
+  trail     = [];
+  statusText.textContent = 'Swipe your hand now — do a clear next-slide motion…';
+  updatePhaseUI();
+  // auto-stop after 3 s if teacher forgets to click again
+  setTimeout(()=>{ if(camPhase === 'CALIBRATING') calBtn.click(); }, 3000);
+});
+
+// ---- enable / disable camera ----
+async function enableCamera(){
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({ video:{ width:320, height:240 }, audio:false });
+    camVideo.srcObject = stream;
+    camMsg.style.display = 'none';
+    cameraOn     = true;
+    bgFrameCount = 0;
+    trail        = [];
+    trailCal     = [];
+    camPhase     = 'LEARNING';
+    camBtn.textContent  = 'Disable camera';
+    statusText.textContent = 'Learning your background — hold still…';
+    updatePhaseUI();
+    detectTimer = setInterval(detectFrame, 80);
+  } catch(err){
+    camMsg.textContent  = 'Camera permission denied. Buttons and arrow keys still work.';
+    camMsg.style.display = 'flex';
+    statusText.textContent = 'Camera unavailable';
+  }
+}
+
+function disableCamera(){
+  cameraOn = false;
+  camPhase = 'IDLE';
+  if(detectTimer) clearInterval(detectTimer);
+  if(camVideo.srcObject){
+    camVideo.srcObject.getTracks().forEach(t => t.stop());
+    camVideo.srcObject = null;
+  }
+  camMsg.textContent   = 'Camera is off';
+  camMsg.style.display = 'flex';
+  cueLight.classList.remove('tracking', 'fire');
+  camBtn.textContent     = 'Enable camera';
+  statusText.textContent = 'Camera off';
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  updatePhaseUI();
+}
+
+camBtn.addEventListener('click', ()=>{
+  if(cameraOn) disableCamera(); else enableCamera();
+});
+updatePhaseUI();
+
+updateChrome();
+</script>
+</body>
+</html>
